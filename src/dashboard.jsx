@@ -1,10 +1,9 @@
-
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 const API = "https://ircshrmbackend.stackenzo.com";
 
-const EMPLOYEES_API = `${API}/api/hr/employees/departments`;
+const EMPLOYEES_API = `${API}/api/hr/employees/assigned`;
 const REQUESTS_API = `${API}/api/fill/shift-change-requests-departments`;
 
 const getToken = () => localStorage.getItem("hrmToken");
@@ -56,7 +55,6 @@ export default function Dashboard() {
     const [shifts, setShifts] = useState([]);
     const [requests, setRequests] = useState([]);
 
-    const [department, setDepartment] = useState({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
@@ -73,12 +71,22 @@ export default function Dashboard() {
 
     const [successMessage, setSuccessMessage] = useState("");
 
+    // Apply leave on behalf of an assigned employee
+    const [leaveForm, setLeaveForm] = useState({
+        employee_code: "",
+        from_date: "",
+        to_date: "",
+        leave_type: "FULL_DAY",
+        reason: ""
+    });
+    const [submittingLeave, setSubmittingLeave] = useState(false);
+
     const isLoggedIn = Boolean(
         getToken() && user.employee_id
     );
 
     // =====================================================
-    // FETCH EMPLOYEES AND SHIFTS
+    // FETCH ASSIGNED EMPLOYEES
     // =====================================================
 
     const fetchEmployees = useCallback(async () => {
@@ -94,7 +102,6 @@ export default function Dashboard() {
 
         setEmployees(result.employees || []);
         setShifts(result.available_shifts || []);
-        setDepartment(result.department || {});
     }, []);
 
     // =====================================================
@@ -321,6 +328,92 @@ export default function Dashboard() {
     };
 
     // =====================================================
+    // APPLY LEAVE ON BEHALF OF ASSIGNED EMPLOYEE
+    // =====================================================
+
+    const handleLeaveSubmit = async (event) => {
+        event.preventDefault();
+
+        const payload = {
+            employee_code: leaveForm.employee_code.trim(),
+            from_date: leaveForm.from_date,
+            to_date: leaveForm.to_date,
+            leave_type: leaveForm.leave_type,
+            reason: leaveForm.reason.trim()
+        };
+
+        if (
+            !payload.employee_code ||
+            !payload.from_date ||
+            !payload.to_date ||
+            !payload.leave_type ||
+            !payload.reason
+        ) {
+            setError("Please complete all leave request fields.");
+            return;
+        }
+
+        if (payload.from_date > payload.to_date) {
+            setError("To date must be on or after from date.");
+            return;
+        }
+
+        if (
+            payload.leave_type !== "MULTI_DAY" &&
+            payload.from_date !== payload.to_date
+        ) {
+            setError(`${payload.leave_type} leave must be for a single date.`);
+            return;
+        }
+
+        if (
+            payload.leave_type === "MULTI_DAY" &&
+            payload.from_date === payload.to_date
+        ) {
+            setError("Multi-day leave must cover more than one date.");
+            return;
+        }
+
+        try {
+            setSubmittingLeave(true);
+            setError("");
+            setSuccessMessage("");
+
+            const response = await fetch(
+                `${API}/api/fill/leaveRequest/on-behalf`,
+                {
+                    method: "POST",
+                    headers: authHeaders(),
+                    body: JSON.stringify(payload)
+                }
+            );
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.message || "Failed to submit leave request");
+            }
+
+            setSuccessMessage(
+                `Leave request submitted for ${result.employee?.employee_code || payload.employee_code}. Status: ${result.leave?.status || "PENDING"}.`
+            );
+
+            setLeaveForm({
+                employee_code: "",
+                from_date: "",
+                to_date: "",
+                leave_type: "FULL_DAY",
+                reason: ""
+            });
+
+        } catch (err) {
+            setError(err.message || "Unable to submit leave request");
+        } finally {
+            setSubmittingLeave(false);
+        }
+    };
+
+    // =====================================================
     // LOGOUT
     // =====================================================
 
@@ -341,20 +434,12 @@ export default function Dashboard() {
                 <div className="text-center">
                     <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
                     <p className="text-gray-500 mt-4 text-sm">
-                        Loading department dashboard...
+                        Loading reporting manager dashboard...
                     </p>
                 </div>
             </div>
         );
     }
-
-    // =====================================================
-    // CURRENT USER EMPLOYEE
-    // =====================================================
-
-    const myEmployee = employees.find(
-        (employee) => employee.employee_id === user.employee_id
-    );
 
     return (
         <div className="min-h-screen bg-gray-50">
@@ -368,7 +453,7 @@ export default function Dashboard() {
                             IRCS HRM
                         </h1>
                         <p className="text-xs text-gray-500 mt-1">
-                            Department Management Portal
+                            Reporting Manager Portal
                         </p>
                     </div>
 
@@ -379,7 +464,7 @@ export default function Dashboard() {
                                 {user.first_name} {user.last_name}
                             </p>
                             <p className="text-xs text-gray-500">
-                                {department.department_name || user.department}
+                                Reporting Manager
                             </p>
                         </div>
 
@@ -404,10 +489,10 @@ export default function Dashboard() {
                 <div className="mb-7 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
                         <h2 className="text-2xl font-bold text-gray-900">
-                            {department.department_name || "Department Dashboard"}
+                            Reporting Manager Dashboard
                         </h2>
                         <p className="text-sm text-gray-500 mt-1">
-                            Manage shift requests and employee schedules.
+                            Manage your assigned employees, shift requests, and leave applications.
                         </p>
                     </div>
 
@@ -439,7 +524,7 @@ export default function Dashboard() {
 
                     <div className="bg-white border border-gray-200 rounded-2xl p-5">
                         <p className="text-sm text-gray-500">
-                            Department Members
+                            Assigned Employees
                         </p>
                         <h3 className="text-3xl font-bold text-gray-900 mt-2">
                             {employees.length}
@@ -467,7 +552,109 @@ export default function Dashboard() {
                 </div>
 
                 {/* ================================================= */}
-                {/* SECTION 1: SHIFT CHANGE REQUESTS */}
+                {/* SECTION 1: APPLY LEAVE ON BEHALF */}
+                {/* ================================================= */}
+
+                <section className="mb-10 bg-white border border-gray-200 rounded-2xl p-5 lg:p-6">
+                    <div className="mb-5">
+                        <h3 className="text-xl font-bold text-gray-900">
+                            Apply Leave on Behalf
+                        </h3>
+                        <p className="text-sm text-gray-500 mt-1">
+                            Submit a leave request for an employee assigned to you. The request will follow the normal approval process.
+                        </p>
+                    </div>
+
+                    <form onSubmit={handleLeaveSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                Employee Code
+                            </label>
+                            <input
+                                type="text"
+                                value={leaveForm.employee_code}
+                                onChange={(e) => setLeaveForm((prev) => ({ ...prev, employee_code: e.target.value }))}
+                                placeholder="Example: IRCSCH/005"
+                                autoComplete="off"
+                                className="w-full h-11 px-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                                required
+                            />
+                            <p className="text-xs text-gray-400 mt-1">
+                                Only employees actively assigned to your reporting list are eligible.
+                            </p>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                Leave Type
+                            </label>
+                            <select
+                                value={leaveForm.leave_type}
+                                onChange={(e) => setLeaveForm((prev) => ({ ...prev, leave_type: e.target.value }))}
+                                className="w-full h-11 px-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500"
+                            >
+                                <option value="FULL_DAY">Full Day</option>
+                                <option value="HALF_DAY">Half Day</option>
+                                <option value="MULTI_DAY">Multiple Days</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                From Date
+                            </label>
+                            <input
+                                type="date"
+                                value={leaveForm.from_date}
+                                onChange={(e) => setLeaveForm((prev) => ({ ...prev, from_date: e.target.value }))}
+                                min={new Date().toLocaleDateString("en-CA")}
+                                className="w-full h-11 px-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500"
+                                required
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                To Date
+                            </label>
+                            <input
+                                type="date"
+                                value={leaveForm.to_date}
+                                onChange={(e) => setLeaveForm((prev) => ({ ...prev, to_date: e.target.value }))}
+                                min={leaveForm.from_date || new Date().toLocaleDateString("en-CA")}
+                                className="w-full h-11 px-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500"
+                                required
+                            />
+                        </div>
+
+                        <div className="md:col-span-2">
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                Reason
+                            </label>
+                            <textarea
+                                value={leaveForm.reason}
+                                onChange={(e) => setLeaveForm((prev) => ({ ...prev, reason: e.target.value }))}
+                                rows={3}
+                                placeholder="Enter the reason for leave"
+                                className="w-full px-3 py-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 resize-y"
+                                required
+                            />
+                        </div>
+
+                        <div className="md:col-span-2 flex justify-end">
+                            <button
+                                type="submit"
+                                disabled={submittingLeave}
+                                className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold"
+                            >
+                                {submittingLeave ? "Submitting..." : "Submit Leave Request"}
+                            </button>
+                        </div>
+                    </form>
+                </section>
+
+                {/* ================================================= */}
+                {/* SECTION 2: SHIFT CHANGE REQUESTS */}
                 {/* ================================================= */}
 
                 <section className="mb-10">
@@ -555,30 +742,10 @@ export default function Dashboard() {
                                                     </div>
 
                                                 </div>
-
-                                                <div className="flex flex-wrap gap-x-5 gap-y-2 mt-4 text-xs text-gray-500">
-                                                    <span>
-                                                        Effective: {formatDate(request.effective_date)}
-                                                    </span>
-
-                                                    <span>
-                                                        Request ID: {request.request_id}
-                                                    </span>
-                                                </div>
-
-                                                {request.reason && (
-                                                    <div className="mt-3 text-sm text-gray-600">
-                                                        <span className="font-semibold text-gray-800">
-                                                            Reason:
-                                                        </span>{" "}
-                                                        {request.reason}
-                                                    </div>
-                                                )}
-
                                             </div>
 
                                             {/* ACTIONS */}
-                                            <div className="w-full lg:w-72 flex flex-col gap-2">
+                                            <div className="w-full lg:w-64 space-y-3">
 
                                                 <button
                                                     disabled={isProcessing}
@@ -632,7 +799,7 @@ export default function Dashboard() {
                 </section>
 
                 {/* ================================================= */}
-                {/* SECTION 2: DEPARTMENT EMPLOYEES */}
+                {/* SECTION 3: ASSIGNED EMPLOYEES */}
                 {/* ================================================= */}
 
                 <section>
@@ -640,10 +807,10 @@ export default function Dashboard() {
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
                         <div>
                             <h3 className="text-xl font-bold text-gray-900">
-                                Department Members
+                                Assigned Employees
                             </h3>
                             <p className="text-sm text-gray-500 mt-1">
-                                View current shifts and allocate new shifts.
+                                View and manage shifts for employees assigned to you.
                             </p>
                         </div>
 
@@ -681,23 +848,15 @@ export default function Dashboard() {
                                 <tbody className="divide-y divide-gray-100">
 
                                     {employees.map((employee) => {
-                                        const isMe =
-                                            employee.employee_id === user.employee_id;
-
                                         return (
                                             <tr
                                                 key={employee.employee_id}
-                                                className={isMe ? "bg-blue-50/50" : "hover:bg-gray-50"}
+                                                className="hover:bg-gray-50"
                                             >
 
                                                 <td className="px-6 py-4">
                                                     <div className="font-semibold text-sm text-gray-900">
-                                                        {employee.first_name} {employee.last_name}
-                                                        {isMe && (
-                                                            <span className="ml-2 text-xs text-blue-600 font-semibold">
-                                                                You
-                                                            </span>
-                                                        )}
+                                                        {employee.first_name} {employee.middle_name} {employee.last_name}
                                                     </div>
                                                 </td>
 
@@ -720,9 +879,9 @@ export default function Dashboard() {
                                                 <td className="px-6 py-4 text-right">
                                                     <button
                                                         onClick={() => openShiftModal(employee)}
-                                                        className="px-4 py-2 rounded-lg bg-gray-900 text-white text-xs font-semibold hover:bg-gray-700"
+                                                        className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
                                                     >
-                                                        {isMe ? "Change My Shift" : "Change Shift"}
+                                                        Change Shift
                                                     </button>
                                                 </td>
 
@@ -734,48 +893,32 @@ export default function Dashboard() {
                             </table>
                         </div>
 
-                        {employees.length === 0 && (
-                            <div className="py-12 text-center text-gray-500 text-sm">
-                                No employees found in this department.
-                            </div>
-                        )}
                     </div>
 
-                    {/* MOBILE EMPLOYEE CARDS */}
-                    <div className="md:hidden space-y-3">
+                    {/* MOBILE CARDS */}
+                    <div className="md:hidden space-y-4">
 
                         {employees.map((employee) => {
-                            const isMe =
-                                employee.employee_id === user.employee_id;
-
                             return (
                                 <div
                                     key={employee.employee_id}
-                                    className="bg-white border border-gray-200 rounded-2xl p-4"
+                                    className="bg-white border border-gray-200 rounded-xl p-4"
                                 >
 
-                                    <div className="flex justify-between gap-3">
-                                        <div>
-                                            <h4 className="font-bold text-gray-900">
-                                                {employee.first_name} {employee.last_name}
-                                            </h4>
-                                            <p className="text-xs text-gray-500 mt-1">
-                                                {employee.employee_code}
-                                            </p>
-                                        </div>
-
-                                        {isMe && (
-                                            <span className="text-xs text-blue-600 font-semibold">
-                                                You
-                                            </span>
-                                        )}
+                                    <div className="mb-3">
+                                        <h4 className="font-bold text-gray-900 text-sm">
+                                            {employee.first_name} {employee.middle_name} {employee.last_name}
+                                        </h4>
+                                        <p className="text-xs text-gray-500">
+                                            {employee.employee_code}
+                                        </p>
                                     </div>
 
-                                    <div className="mt-4 bg-gray-50 rounded-xl p-3">
-                                        <p className="text-xs text-gray-500">
+                                    <div className="bg-gray-50 rounded-lg p-3 mb-3">
+                                        <p className="text-xs text-gray-500 mb-1">
                                             Present Shift
                                         </p>
-                                        <p className="text-sm font-semibold text-gray-900 mt-1">
+                                        <p className="font-semibold text-gray-800 text-sm">
                                             {employee.shift_name || "Not assigned"}
                                         </p>
                                         <p className="text-xs text-gray-500 mt-1">
@@ -787,9 +930,9 @@ export default function Dashboard() {
 
                                     <button
                                         onClick={() => openShiftModal(employee)}
-                                        className="w-full mt-3 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-semibold"
+                                        className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold"
                                     >
-                                        {isMe ? "Change My Shift" : "Change Shift"}
+                                        Change Shift
                                     </button>
 
                                 </div>
@@ -798,7 +941,7 @@ export default function Dashboard() {
 
                         {employees.length === 0 && (
                             <div className="bg-white rounded-xl p-8 text-center text-gray-500">
-                                No employees found.
+                                No employees are currently assigned to you.
                             </div>
                         )}
                     </div>
